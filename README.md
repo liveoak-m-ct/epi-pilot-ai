@@ -51,7 +51,7 @@ python3 epi_pilot.py --render    # 上記＋動画・図の生成（さらに数
 |---|---|
 | `epi_pilot.py` | 仮想患者の生成、組織・シリンジのモデル、特徴量、AIの学習、閉ループ制御、100人評価 |
 | `render.py` | 白背景の解剖模式図・グラフ・動画の描画 |
-| `output/EpiPilotAI_PAI_Final.mp4` | 提出動画（約2分20秒、1倍速） |
+| `output/EpiPilotAI_PAI_Final.mp4` | 提出動画（約2分20秒、1倍速、1920×1080） |
 | `output/result_summary.json` | 評価結果の要約（混同行列・特徴量の重要度を含む） |
 | `output/results_100_patients.csv` | 仮想患者100人ごとの結果 |
 | `output/fig_*.png` | 説明資料用の図 |

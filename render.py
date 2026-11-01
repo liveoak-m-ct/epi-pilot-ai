@@ -16,7 +16,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 from epi_pilot import (CLASS_JA, LAYER_JA, LAYER_KEYS, V_BASELINE, V_CAREFUL, V_FAST)
 
-W, H = 1280, 720
+W, H = 1280, 720          # 論理座標（描画はこの座標系で書く）
+S = 1.5                   # 出力倍率：1280×720 × 1.5 = 1920×1080（フルHD）
+OW, OH = int(W * S), int(H * S)
 FPS = 15
 
 # 色（白背景）
@@ -80,7 +82,7 @@ def font(size: int, bold: bool = False):
 
 
 def text(dr, xy, s, size=16, color=INK, bold=False, anchor=None):
-    dr.text(xy, str(s), font=font(size, bold), fill=color, anchor=anchor)
+    dr.text(xy, str(s), size=size, bold=bold, fill=color, anchor=anchor)
 
 
 def tw(s, size=16, bold=False) -> int:
@@ -104,26 +106,80 @@ def dashed(dr, x0, y0, x1, y1, color, width=2, dash=7):
 
 
 # ---------------------------------------------------------------------------
+# 高解像度出力のための座標変換（論理座標 × S で実際に描く）
+# ---------------------------------------------------------------------------
+def _sc(v):
+    return v * S
+
+
+def _sc_xy(xy):
+    if isinstance(xy, (list, tuple)) and xy and isinstance(xy[0], (list, tuple)):
+        return [(_sc(a), _sc(b)) for a, b in xy]
+    return [_sc(v) for v in xy]
+
+
+def _sw(w):
+    return max(1, int(round(w * S)))
+
+
+class ScaledDraw:
+    """ImageDraw を包み、論理座標・線幅・文字サイズを S 倍して描く。"""
+
+    def __init__(self, img):
+        self.d = ImageDraw.Draw(img)
+
+    def text(self, xy, s, size=16, bold=False, fill=None, anchor=None):
+        size = max(size, 13)   # 小さすぎる文字は13相当まで引き上げる
+        self.d.text(_sc_xy(xy), s, font=font(int(round(size * S)), bold), fill=fill, anchor=anchor)
+
+    def line(self, xy, fill=None, width=1, joint=None):
+        self.d.line(_sc_xy(xy), fill=fill, width=_sw(width), joint=joint)
+
+    def rectangle(self, xy, fill=None, outline=None, width=1):
+        self.d.rectangle(_sc_xy(xy), fill=fill, outline=outline, width=_sw(width))
+
+    def rounded_rectangle(self, xy, radius=0, fill=None, outline=None, width=1):
+        self.d.rounded_rectangle(_sc_xy(xy), radius=_sc(radius), fill=fill, outline=outline, width=_sw(width))
+
+    def ellipse(self, xy, fill=None, outline=None, width=1):
+        self.d.ellipse(_sc_xy(xy), fill=fill, outline=outline, width=_sw(width))
+
+    def polygon(self, xy, fill=None, outline=None):
+        self.d.polygon(_sc_xy(xy), fill=fill, outline=outline)
+
+
+def new_img(w, h):
+    return Image.new('RGB', (int(round(w * S)), int(round(h * S))), BG)
+
+
+def paste(img, sub, xy):
+    img.paste(sub, (int(round(xy[0] * S)), int(round(xy[1] * S))))
+
+
+# ---------------------------------------------------------------------------
 # 深さ → 画面x座標（層ごとに表示幅を調整）
 # ---------------------------------------------------------------------------
 class AnatomyMap:
     MIN_PX = {'epidermis': 6, 'dermis': 12, 'dura': 8, 'arach': 5}
+    # 表示上の縮尺（シミュレーションの数値には影響しない）。皮下組織は幅を抑えて描く
+    DISPLAY_SCALE = {'subcut': 0.4}
 
     def __init__(self, p, x0=AX0, x1=AX1):
         self.p = p
         total = x1 - x0
+        dt = {k: p.thick[k] * self.DISPLAY_SCALE.get(k, 1.0) for k in LAYER_KEYS}
         fixed: dict = {}
         for _ in range(6):
             free = [k for k in LAYER_KEYS if k not in fixed]
-            ppm = (total - sum(fixed.values())) / sum(p.thick[k] for k in free)
+            ppm = (total - sum(fixed.values())) / sum(dt[k] for k in free)
             changed = False
             for k in free:
-                if k in self.MIN_PX and p.thick[k] * ppm < self.MIN_PX[k]:
+                if k in self.MIN_PX and dt[k] * ppm < self.MIN_PX[k]:
                     fixed[k] = self.MIN_PX[k]
                     changed = True
             if not changed:
                 break
-        self.w = {k: fixed.get(k, p.thick[k] * ppm) for k in LAYER_KEYS}
+        self.w = {k: fixed.get(k, dt[k] * ppm) for k in LAYER_KEYS}
         self.xs, x = {}, float(x0)
         for k in LAYER_KEYS:
             self.xs[k] = x
@@ -144,7 +200,7 @@ class AnatomyMap:
 # 解剖模式図（静的部分）
 # ---------------------------------------------------------------------------
 def draw_anatomy(img: Image.Image, p, am: AnatomyMap, labels: bool = True):
-    dr = ImageDraw.Draw(img)
+    dr = ScaledDraw(img)
     rng = np.random.default_rng(p.pid)
     for k in LAYER_KEYS:
         x0, x1 = am.xs[k], am.xe[k]
@@ -157,11 +213,12 @@ def draw_anatomy(img: Image.Image, p, am: AnatomyMap, labels: bool = True):
             r = rng.uniform(7, 10)
             dr.ellipse((xx + jx - r, yy + jy - r, xx + jx + r, yy + jy + r), outline=(232, 200, 104), width=2)
     ix0, ix1 = int(am.xs['inter']), int(am.xe['inter'])
-    sub = Image.new('RGB', (ix1 - ix0, TY1 - TY0), LAYER_COLOR['inter'])
-    sd = ImageDraw.Draw(sub)
+    sub = new_img(ix1 - ix0, TY1 - TY0)
+    ScaledDraw(sub).rectangle((0, 0, ix1 - ix0, TY1 - TY0), fill=LAYER_COLOR['inter'])
+    sd = ScaledDraw(sub)
     for off in range(-260, ix1 - ix0 + 10, 13):
         sd.line([(off, TY1 - TY0), (off + 250, 0)], fill=(206, 188, 228), width=2)
-    img.paste(sub, (ix0, TY0))
+    paste(img, sub, (ix0, TY0))
     sup0, sup1 = am.xs['supra'], am.xe['supra']
     for yy in range(TY0 + 4, TY1, 9):
         dr.line([(sup0 + 2, yy), (sup1 - 2, yy + 3)], fill=(200, 186, 156), width=1)
@@ -299,8 +356,8 @@ class PlotBG:
         self.rect = rect
         x0, y0, x1, y1 = rect
         self.t_max = t_max
-        self.img = Image.new('RGB', (x1 - x0, y1 - y0), BG)
-        d = ImageDraw.Draw(self.img)
+        self.img = new_img(x1 - x0, y1 - y0)
+        d = ScaledDraw(self.img)
         t, lay = rec['t'], rec['layer']
         start = 0
         for j in range(1, len(t) + 1):
@@ -320,7 +377,7 @@ class PlotBG:
     def paste(self, img, t_now):
         x0, y0, x1, y1 = self.rect
         w = max(1, min(x1 - x0, int(t_now / self.t_max * (x1 - x0))))
-        img.paste(self.img.crop((0, 0, w, y1 - y0)), (x0, y0))
+        paste(img, self.img.crop((0, 0, int(round(w * S)), int(round((y1 - y0) * S)))), (x0, y0))
 
 
 def draw_series(dr, rect, t, v, i, t_max, vmax, color, vmin=0.0):
@@ -345,7 +402,7 @@ class CaseView:
         self.rec = ep.rec
         self.p = case['patient']
         self.am = AnatomyMap(self.p)
-        self.base = Image.new('RGB', (W, H), BG)
+        self.base = new_img(W, H)
         draw_anatomy(self.base, self.p, self.am)
         self.t_max = float(self.rec['t'][-1]) + 0.4
         att = np.where(~np.isnan(self.rec['pressure']))[0]
@@ -367,7 +424,7 @@ class CaseView:
         rec, p, am = self.rec, self.p, self.am
         i = self.index_at(t)
         img = self.base.copy()
-        dr = ImageDraw.Draw(img)
+        dr = ScaledDraw(img)
         draw_header(dr, header_tag)
         depth = float(rec['depth'][i])
         tip_x = am.x(depth)
@@ -427,9 +484,9 @@ def draw_header(dr, tag):
     text(dr, (232, 18), '硬膜外穿刺の抵抗消失（LOR）をAIが判定し、1軸ロボットが自動停止する', 16, INK)
     if tag:
         w = tw(tag, 14, True) + 20
-        dr.rounded_rectangle((W - 22 - w, 12, W - 22, 40), radius=10, fill=(232, 244, 246), outline=TEAL)
-        text(dr, (W - 22 - w / 2, 26), tag, 14, TEAL, True, anchor='mm')
-    text(dr, (W - 22, 46), '合成データによるシミュレーション｜医療用ではありません', 11, RED, anchor='ra')
+        dr.rounded_rectangle((W - 22 - w, 8, W - 22, 36), radius=10, fill=(232, 244, 246), outline=TEAL)
+        text(dr, (W - 22 - w / 2, 22), tag, 14, TEAL, True, anchor='mm')
+    text(dr, (W - 22, 41), '合成データによるシミュレーション｜医療用ではありません', 11, RED, anchor='ra')
     dr.line([(0, 60), (W, 60)], fill=TEAL, width=3)
 
 
@@ -510,16 +567,16 @@ def result_card(dr, case, th):
 # 静止画シーン
 # ---------------------------------------------------------------------------
 def title_scene(cv: CaseView) -> Image.Image:
-    img = Image.new('RGB', (W, H), BG)
-    dr = ImageDraw.Draw(img)
+    img = new_img(W, H)
+    dr = ScaledDraw(img)
     dr.rectangle((0, 0, W, 8), fill=TEAL)
     text(dr, (80, 70), 'Epi-Pilot AI', 64, TEAL, True)
     text(dr, (80, 160), '硬膜外穿刺の「抵抗消失（LOR）」をAIが判定し、', 28, INK, True)
     text(dr, (80, 202), '1軸ロボットが針を自動で止めるシミュレーション', 28, INK, True)
     text(dr, (80, 262), 'Physical AI 応用1 最終課題 ｜ 仮想患者100人での比較評価', 18, MUTED)
-    strip = cv.base.crop((0, 66, W, 392)).resize((960, 245))
-    img.paste(strip, (160, 320))
-    ImageDraw.Draw(img).rectangle((160, 320, 1120, 565), outline=LINE, width=2)
+    strip = cv.base.crop((0, int(66 * S), OW, int(392 * S))).resize((int(960 * S), int(245 * S)), Image.LANCZOS)
+    paste(img, strip, (160, 320))
+    ScaledDraw(img).rectangle((160, 320, 1120, 565), outline=LINE, width=2)
     text(dr, (W / 2, 600), '実在の患者・実測データ・医療機器は使用していません。教育用の合成データによるシミュレーションです。',
          16, RED, True, anchor='mm')
     return img
@@ -527,7 +584,7 @@ def title_scene(cv: CaseView) -> Image.Image:
 
 def background_scene(cv: CaseView) -> Image.Image:
     img = cv.base.copy()
-    dr = ImageDraw.Draw(img)
+    dr = ScaledDraw(img)
     draw_header(dr, '背景：硬膜外麻酔と抵抗消失法')
     draw_needle(dr, cv.am.x(0.5), ORANGE)
     x0, y0, x1, y1 = 16, 404, 1264, 710
@@ -546,8 +603,8 @@ def background_scene(cv: CaseView) -> Image.Image:
 
 
 def results_scene(summary: dict) -> Image.Image:
-    img = Image.new('RGB', (W, H), BG)
-    dr = ImageDraw.Draw(img)
+    img = new_img(W, H)
+    dr = ScaledDraw(img)
     draw_header(dr, '結果：仮想患者100人')
     draw_results(dr, summary, 40, 80)
     return img
@@ -559,7 +616,7 @@ def draw_results(dr, summary, ox, oy):
     text(dr, (ox, oy), '学習に使っていない仮想患者100人で、同じ条件の穿刺を比較', 22, INK, True)
     text(dr, (ox, oy + 36),
          f'皮膚〜硬膜外腔 {pop["skin_to_epidural_mm_range"][0]}〜{pop["skin_to_epidural_mm_range"][1]} mm、'
-         f'偽LORあり {pop["with_false_lor"]}人、抵抗消失が弱い {pop["weak_lor"]}人（いずれも模擬値）', 15, MUTED)
+         f'偽LORあり {pop["with_false_lor"]}人、抵抗消失が弱い {pop["weak_lor"]}人（評価のため臨床より意図的に多く設定した模擬値）', 15, MUTED)
     rows = [('Epi-Pilot AI', s['ai']), (f'従来の圧閾値法（閾値 基準圧×{summary["threshold_method"]["theta"]:.2f}）', s['threshold'])]
     bx0, bx1 = ox, ox + 760
     for k, (name, r) in enumerate(rows):
@@ -605,15 +662,15 @@ def draw_results(dr, summary, ox, oy):
         '・圧だけを見る方法は、閾値を下げると「弱い抵抗消失」を見逃して硬膜に達し、上げると棘間靱帯の「偽LOR」で早く止まる。',
         '・AIは「黄色靱帯のプツプツ（予兆）→ 抵抗の急低下 → プランジャーの前進」という時間的な流れを特徴量として使う。',
         f'・10 Hzごとの層の判定精度（検証用100人）：{fc["accuracy"] * 100:.1f}%。AIは深さ・位置の情報を一切使っていない。',
-        '・合成データは臨床の手応えを模して設計したもので、AIに有利な差が含まれる。実測データでの検証が次の課題。',
+        '・偽LOR・弱いLORの割合はストレステストとして臨床より意図的に高く設定しており、差は大きめに表れている可能性がある。',
     ]
     for k, s_ in enumerate(notes):
         text(dr, (ox, oy + 372 + k * 32), s_, 15, INK)
 
 
 def closing_scene() -> Image.Image:
-    img = Image.new('RGB', (W, H), BG)
-    dr = ImageDraw.Draw(img)
+    img = new_img(W, H)
+    dr = ScaledDraw(img)
     draw_header(dr, 'まとめと限界')
     text(dr, (60, 90), 'まとめ', 24, TEAL, True)
     for k, s in enumerate([
@@ -689,8 +746,8 @@ def render_all(cases, res, outdir: Path):
 
     out = outdir / 'EpiPilotAI_PAI_Final.mp4'
     args = [_ffmpeg(), '-y', '-loglevel', 'error', '-f', 'rawvideo', '-vcodec', 'rawvideo',
-            '-pix_fmt', 'rgb24', '-s', f'{W}x{H}', '-r', str(FPS), '-i', '-',
-            '-an', '-vcodec', 'libx264', '-preset', 'medium', '-crf', '20',
+            '-pix_fmt', 'rgb24', '-s', f'{OW}x{OH}', '-r', str(FPS), '-i', '-',
+            '-an', '-vcodec', 'libx264', '-preset', 'medium', '-crf', '18',
             '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(out)]
     proc = subprocess.Popen(args, stdin=subprocess.PIPE)
     try:
