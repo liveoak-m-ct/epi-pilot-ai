@@ -1,0 +1,158 @@
+{
+  "note": "合成データによる教育用シミュレーション。臨床性能を示すものではない。",
+  "train_patients": 300,
+  "test_patients": 100,
+  "train_samples": 55438,
+  "model": "RandomForestClassifier(n_estimators=80, max_depth=12)",
+  "features": [
+    "圧比",
+    "圧低下量",
+    "プランジャー速度",
+    "抵抗比",
+    "抵抗低下量",
+    "プツプツ強度（現在）",
+    "プツプツ強度（直近4秒の最大）",
+    "抵抗レベル",
+    "針の速度"
+  ],
+  "feature_importance": {
+    "圧比": 0.07,
+    "圧低下量": 0.004,
+    "プランジャー速度": 0.145,
+    "抵抗比": 0.026,
+    "抵抗低下量": 0.003,
+    "プツプツ強度（現在）": 0.025,
+    "プツプツ強度（直近4秒の最大）": 0.407,
+    "抵抗レベル": 0.302,
+    "針の速度": 0.016
+  },
+  "threshold_method": {
+    "theta": 0.3,
+    "tuning_table(theta, success, dura)": [
+      [
+        0.3,
+        75,
+        21
+      ],
+      [
+        0.35,
+        73,
+        17
+      ],
+      [
+        0.4,
+        70,
+        12
+      ],
+      [
+        0.45,
+        59,
+        6
+      ],
+      [
+        0.5,
+        55,
+        3
+      ],
+      [
+        0.55,
+        49,
+        0
+      ],
+      [
+        0.6,
+        40,
+        0
+      ],
+      [
+        0.65,
+        35,
+        0
+      ],
+      [
+        0.7,
+        35,
+        0
+      ],
+      [
+        0.75,
+        34,
+        0
+      ],
+      [
+        0.8,
+        32,
+        0
+      ]
+    ]
+  },
+  "closed_loop_test": {
+    "ai": {
+      "n": 100,
+      "success": 100,
+      "early_stop": 0,
+      "dura_reached": 0,
+      "overshoot_mm_mean": 0.15,
+      "overshoot_mm_max": 0.19,
+      "margin_to_dura_mm_mean": 4.8,
+      "margin_to_dura_mm_min": 2.9,
+      "time_s_mean": 30.0
+    },
+    "threshold": {
+      "n": 100,
+      "success": 77,
+      "early_stop": 3,
+      "dura_reached": 20,
+      "overshoot_mm_mean": 0.48,
+      "overshoot_mm_max": 3.16,
+      "margin_to_dura_mm_mean": 4.47,
+      "margin_to_dura_mm_min": 1.19,
+      "time_s_mean": 35.4
+    }
+  },
+  "frame_classification_test": {
+    "classes": [
+      "組織内（棘間靱帯など）",
+      "黄色靱帯（プツプツ）",
+      "硬膜外腔（LOR）"
+    ],
+    "confusion_matrix(rows=true, cols=pred)": [
+      [
+        10425,
+        5,
+        0
+      ],
+      [
+        77,
+        3463,
+        0
+      ],
+      [
+        0,
+        0,
+        3808
+      ]
+    ],
+    "recall": [
+      1.0,
+      0.978,
+      1.0
+    ],
+    "precision": [
+      0.993,
+      0.999,
+      1.0
+    ],
+    "accuracy": 0.995
+  },
+  "test_population": {
+    "with_false_lor": 63,
+    "weak_lor": 23,
+    "skin_to_epidural_mm_mean": 48.6,
+    "skin_to_epidural_mm_range": [
+      33.6,
+      65.2
+    ]
+  },
+  "runtime_s": 206.5
+}
